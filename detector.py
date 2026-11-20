@@ -3,17 +3,19 @@ import math
 import requests
 from datetime import datetime
 
-AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN", "your-tenant.us.auth0.com")
-CLIENT_ID = os.getenv("AUTH0_CLIENT_ID", "your_m2m_client_id")
-CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET", "your_m2m_client_secret")
+CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
+CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
+AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 AUDIENCE = f"https://{AUTH0_DOMAIN}/api/v2/"
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_telegram_bot_token")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "your_telegram_chat_id")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-SPEED_THRESHOLD_KMH = 800 
+SPEED_THRESHOLD_KMH = int(os.getenv("SPEED_THRESHOLD_KMH", "800"))
+MIN_DISTANCE_KM = int(os.getenv("MIN_DISTANCE_KM", "50"))
 
 user_states = {}
+seen_log_ids = set()
 
 
 def get_auth0_token():
@@ -92,6 +94,11 @@ def check_impossible_travel():
     logs = fetch_auth0_logs(token)
 
     for log in reversed(logs):
+        log_id = log.get("log_id") or log.get("_id")
+        if log_id in seen_log_ids:
+            continue
+        seen_log_ids.add(log_id)
+
         if log.get("type") != "s":
             continue
 
@@ -121,7 +128,7 @@ def check_impossible_travel():
                 distance_km = haversine(prev["lat"], prev["lon"], current_lat, current_lon)
                 speed_kmh = distance_km / time_diff_hours
 
-                if distance_km > 50 and speed_kmh > SPEED_THRESHOLD_KMH:
+                if distance_km > MIN_DISTANCE_KM and speed_kmh > SPEED_THRESHOLD_KMH:
                     alert_msg = (
                         f"🚨 *IMPOSSIBLE TRAVEL DETECTED!*\n\n"
                         f"👤 *User:* {user_name} (`{user_id}`)\n"
@@ -129,7 +136,11 @@ def check_impossible_travel():
                         f"📍 *Current:* {geo['city']}, {geo['country']} at {current_time.strftime('%H:%M:%S UTC')}\n"
                         f"📏 *Distance:* {int(distance_km)} km\n"
                         f"⏱ *Time elapsed:* {round(time_diff_hours * 60, 1)} minutes\n"
-                        f"⚡ *Calculated speed:* *{int(speed_kmh)} km/h*"
+                        f"⚡ *Calculated speed:* *{int(speed_kmh)} km/h*\n\n"
+                        f"🛠 *Recommended actions:*\n"
+                        f"1. Contact the user to verify the login\n"
+                        f"2. Revoke active sessions in Auth0\n"
+                        f"3. If not confirmed: reset password and require MFA re-verification"
                     )
                     print(alert_msg)
                     send_telegram_alert(alert_msg)
@@ -146,4 +157,10 @@ def check_impossible_travel():
 
 
 if __name__ == "__main__":
-    check_impossible_travel()
+    import time
+    while True:
+        try:
+            check_impossible_travel()
+        except Exception as e:
+            print(f"Scan failed: {e}")
+        time.sleep(60)
